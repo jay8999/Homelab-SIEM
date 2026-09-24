@@ -1,0 +1,66 @@
+# Playbook: SSH Brute-Force Attack Investigation
+
+## Metadata
+* **Author:** Jayden
+* **Target SIEM:** Wazuh
+* **Associated Wazuh Rules:** `5710` (SSHD brute force trying to get access), `5712` (SSHD brute force success)
+* **Severity Level:** Medium (High if successful login detected)
+* **Last Updated:** 2026-09-24
+
+---
+
+## 1. Trigger Conditions
+This playbook is triggered when Wazuh generates an alert indicating repeated failed SSH authentication attempts against a Linux endpoint monitored by a Wazuh agent.
+
+* **Primary Rule:** Rule 5710 (Multiple failed logins from a single source IP)
+* **Escalation Rule:** Rule 5712 (Successful login following multiple failures—**Critical Priority**)
+
+---
+
+## 2. Triage & Investigation Steps
+
+### Step 1: Examine the Wazuh Alert Details
+1. Log into your **Wazuh Dashboard**.
+2. Navigate to **Modules > Security events** and filter by `rule.id: 5710`.
+3. Expand the alert log to review the following fields:
+   * `agent.name`: Which machine is being targeted?
+   * `data.srcip`: What is the attacker's IP address?
+   * `full_log`: Look for the raw SSH log (e.g., `Failed password for invalid user root from X.X.X.X port...`).
+
+### Step 2: Contextualize the Source IP
+1. **Check Threat Intel / Geolocation:** Run the source IP through a tool or lookup site (e.g., AbuseIPDB, VirusTotal, or a quick GeoIP lookup) to see if it belongs to a known VPN, hosting provider, or known malicious scanner.
+2. **Is it Internal or External?** 
+   * If external: Likely automated internet noise hitting your exposed port.
+   * If internal: Check if another device or a misconfigured homelab script/service is causing the traffic.
+
+### Step 3: Check for Successful Compromise (Crucial)
+1. Filter Wazuh events for `rule.id: 5712` or search logs for `Accepted publickey` or `Accepted password` from that same `data.srcip` around the same timestamp.
+2. **Decision Tree:**
+   * **If failures only (Rule 5710):** Proceed to *Standard Containment*.
+   * **If success detected (Rule 5712):** Immediately escalate to **Incident Response: Compromised Host/Account**.
+
+---
+
+## 3. Containment & Remediation
+
+### For Failed Attempts (Standard Brute Force):
+1. **Block the IP at the Host Level (Manual):**
+   Log into the targeted agent and block the IP using UFW or iptables:
+   ```bash
+   sudo ufw deny from <ATTACKER_IP> to any port 22
+
+### For Successful Logins (Compromise):
+
+Isolate the Host: Disconnect the network interface of the affected agent if lateral movement is suspected.
+
+Terminate Active Sessions:
+  # Kill active SSH sessions for the compromised user
+  sudo pkill -u <compromised_user>
+
+To prevent recurrence:
+
+    Disable Password Authentication: Enforce SSH key based authentication only (PasswordAuthentication no in /etc/ssh/sshd_config).
+
+    Change Default Ports: Move SSH off port 22 to reduce automated scanner noise.
+
+    Install Fail2ban: Use Fail2ban alongside Wazuh for rapid local mitigation.
